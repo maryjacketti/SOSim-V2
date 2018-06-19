@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+ # -*- coding: utf-8 -*-
 
 #"A predictive Bayesian data-derived multi-modal Gaussian model of sunken oil mass" Article by Angelica Echavarria-Gregory.
 #Angelica's dissertation "Predictive Data-Derived Bayesian Statistic-Transport Model and Simulator of Sunken Oil Mass" can also be used as a reference.
@@ -9,31 +9,31 @@ import sys
 sys.path.append('/Users/maryjacketti/Desktop/SOSim/SOSim')
 
 
-import itertools
-from math import *
-import numpy as np
-import random
-import mcint
-import utm
-import pandas as pd
-import matplotlib.pyplot as plt
-from multiprocessing import pool
-from SOSimCoreC import *
-from SOSimOPIC import *
-import SOSimCoreC as SOSimCore
-import SOSimOPIC as SOSimOPI
-
-
-import datetime
+import itertools #The itertools module includes a set of functions for working with iterable (sequence-like) data sets
+from math import * #This module provides access to the mathematical functions defined by the C standard.
+import numpy as np #This module allows the use of arrays and lists for calculations. 
+import random #This module generates a random number in between the given range.
+import mcint #This module allows for the Monte Carlo integration 
+import utm #This module converts coordinates from degrees to utm and back
+import pandas as pd #Allows for the uploading of different excel file campaigns 
+import matplotlib.pyplot as plt #Useed for plotting the result 
+from multiprocessing import pool #Pool allows for the multiprocessing of the Monte Carlo Integration
+import datetime #This module supplies classes for manipulating dates and times in both simple and complex ways
+import multiprocessing as mp #Allows multiprocessing
+from multiprocessing import cpu_count #Can count how much CPU the computer uses
+from multiprocessing.pool import ApplyResult #Applies the results from each multiprocess 
+from functools import partial #Used for higher order functions
+from sklearn.cluster import KMeans #Clusters the campaigns into groups to form the amount of patches
+import multiprocessing 
 
 #This section describes the conditional bivariate Gaussian distribution.
 #This is the conditional sampling distribution for the 2-D Bayesian model.
 #mux and muy are the 2-D means, sigmax and sigmay are the 2-D covariance matrixes
-#DLx and DLy are the difference between the points to be modeled and the spill points
+#DLx and DLy are the sampling locations
 #rho is the correlation coefficient
 #ff is used to define mux,muy,sigmax,sigmay and returns the value for the conditional bivariate Gaussian distribution
-def B_sampling(DLx,DLy,mux,muy,sigmax,sigmay,rho): #definition of Bm in the conditional probability equation
-    Bs=((((DLx-mux))**(2.0))/((sigmax)**2.0))+((((DLy-muy))**(2.0))/((sigmay)**2.0))-((2.0*(rho)*(DLx-mux)*(DLy-muy))/(sigmax*sigmay))
+def B_sampling(x,y,mux,muy,sigmax,sigmay,rho): #definition of Bm in the conditional probability equation
+    Bs=((((x-mux))**(2.0))/((sigmax)**2.0))+((((y-muy))**(2.0))/((sigmay)**2.0))-((2.0*(rho)*(x-mux)*(y-muy))/(sigmax*sigmay))
     return Bs 
 
 def CG(sx,sy,BuSamp,ro): #conditional bivariate Gaussian distribution
@@ -52,42 +52,47 @@ def ff(x,y,mux,muy,sigmax,sigmay,rho,x0,y0,t,sigmax0,sigmay0): #defines the gaus
 #This sums the multiplication of the conditional bivariate Gaussian distribution with the gamma's for the 4 patches.
 #The breakdown of the integration was separated into 2 parts: first, the gamma and conditional Bivariate would be multiplied
 #second, the likelihood function would be determined and multiplied by the first part.
-def f(x,y,gamma,mux1,muy1,sigmax1,sigmay1,rho1,mux2,muy2,sigmax2,sigmay2,rho2,mux3,muy3,sigmax3,sigmay3,rho3,mux4,muy4,sigmax4,sigmay4,rho4,x0,y0,t,sigmax0,sigmay0): #defines the sum of the four patches multiplied by gamma (first part in Bayesian equation)
-    return gamma[0]*ff(x,y,mux1,muy1,sigmax1,sigmay1,rho1,x0,y0,t,sigmax0,sigmay0) + gamma[1]*ff(x,y,mux2,muy2,sigmax2,sigmay2,rho2,x0,y0,t,sigmax0,sigmay0) + gamma[2]*ff(x,y,mux3,muy3,sigmax3,sigmay3,rho3,x0,y0,t,sigmax0,sigmay0) + gamma[3]*ff(x,y,mux4,muy4,sigmax4,sigmay4,rho4,x0,y0,t,sigmax0,sigmay0)
 
 def forwd(x,y,gamma,var,x0,y0,t,sigmax0,sigmay0): #assigns mu, sigma, and ro values to a variable
     [mux1,muy1,sigmax1,sigmay1,rho1,mux2,muy2,sigmax2,sigmay2,rho2,mux3,muy3,sigmax3,sigmay3,rho3,mux4,muy4,sigmax4,sigmay4,rho4] = var
-    return gamma[0]*ff(x,y,mux1,muy1,sigmax1,sigmay1,rho1,x0,y0,t,sigmax0,sigmay0) + gamma[1]*ff(x,y,mux2,muy2,sigmax2,sigmay2,rho2,x0,y0,t,sigmax0,sigmay0) + gamma[2]*ff(x,y,mux3,muy3,sigmax3,sigmay3,rho3,x0,y0,t,sigmax0,sigmay0) + gamma[3]*ff(x,y,mux4,muy4,sigmax4,sigmay4,rho4,x0,y0,t,sigmax0,sigmay0)
+    return gamma[0]*ff(x,y,mux1,muy1,sigmax1,sigmay1,rho1,x0[0],y0[0],t,sigmax0,sigmay0) + gamma[1]*ff(x,y,mux2,muy2,sigmax2,sigmay2,rho2,x0[1],y0[1],t,sigmax0,sigmay0) + gamma[2]*ff(x,y,mux3,muy3,sigmax3,sigmay3,rho3,x0[2],y0[2],t,sigmax0,sigmay0) + gamma[3]*ff(x,y,mux4,muy4,sigmax4,sigmay4,rho4,x0[3],y0[3],t,sigmax0,sigmay0)
 
 
 #This section describes the likelihood function, the last component in the Bayesian analytical model
 #This assumes an exponential distribution of oil concentration sampling variability around the mean
-def LV(x,y,con,gamma,var,x0,y0,t,sigmax0,sigmay0): #defines the likelihood function
+def LV(DLx,DLy,DLcon,gamma,var,x0,y0,t,sigmax0,sigmay0): #defines the likelihood function
     [mux1,muy1,sigmax1,sigmay1,rho1,mux2,muy2,sigmax2,sigmay2,rho2,mux3,muy3,sigmax3,sigmay3,rho3,mux4,muy4,sigmax4,sigmay4,rho4] = var
     l = 1.0 #first number given to create a loop that can be multiplied together
-    for i in range(len(x)):
-        s = []
-        # for ti in Ti[Ti<t]: # t campaign time; ti spill time 
-        la = gamma[0]*ff(x[i],y[i],mux1,muy1,sigmax1,sigmay1,rho1,x0,y0,t,sigmax0,sigmay0) + gamma[1]*ff(x[i],y[i],mux2,muy2,sigmax2,sigmay2,rho2,x0,y0,t,sigmax0,sigmay0) + gamma[2]*ff(x[i],y[i],mux3,muy3,sigmax3,sigmay3,rho3,x0,y0,t,sigmax0,sigmay0) + gamma[3]*ff(x[i],y[i],mux4,muy4,sigmax4,sigmay4,rho4,x0,y0,t,sigmax0,sigmay0)
-        #mean of the exponential distribution^, x[i] and y[i] are the field data location points
-        s.append(la) #updates the array in s and adds new la to the list
-        lam = np.sum(s) #adds all values of s together
-        la = 0.0
-        if lam > 1e-300:
-            la = 1.0/(lam) * np.exp(-1.0/(lam)*con[i]) #likelihood function equation, con[i] is the concentration found at the field data points 
-        if abs(la-0.0) > 1e-300: #to ensure that la is not equal to zero
+    stn = 0
+    while stn < len(t):
+        for i in range(len(DLx)):
+            s = []
+            # for ti in Ti[Ti<t]: # t campaign time; ti spill time 
+            la = gamma[0]*ff(DLx[stn][i],DLy[stn][i],mux1,muy1,sigmax1,sigmay1,rho1,x0,y0,t[stn],sigmax0,sigmay0) + gamma[1]*ff(DLx[stn][i],DLy[stn][i],mux2,muy2,sigmax2,sigmay2,rho2,x0,y0,t[stn],sigmax0,sigmay0) + gamma[2]*ff(DLx[stn][i],DLy[stn][i],mux3,muy3,sigmax3,sigmay3,rho3,x0,y0,t[stn],sigmax0,sigmay0) + gamma[3]*ff(DLx[stn][i],DLy[stn][i],mux4,muy4,sigmax4,sigmay4,rho4,x0,y0,t[stn],sigmax0,sigmay0)
+            #mean of the exponential distribution^, x[i] and y[i] are the field data location points
+            s.append(la) #updates the array in s and adds new la to the list
+            lam = np.sum(s) #adds all values of s together
+            la = 0.0
+            if lam > 1e-300:
+                la = 1.0/(lam) * np.exp(-1.0/(lam)*DLcon[i]) #likelihood function equation, con[i] is the concentration found at the field data points 
+            if abs(la-0.0) > 1e-300: #to ensure that la is not equal to zero
             # print lam
         # l=l*np.exp(-np.log(lam) -1/lam*con[i])
-            l = l * la
-    return l #returns the likelihood function until the loop finishes
+                l = l * la
+        stn = stn + 1
+    return l #returns the likelihood function until the loop finished
 
 
 #This section multiplies the likelihood function with the first function to complete the Bayesian analytical model to get a probability
-def integ(x,y,x0new,y0new,t,xx,yy,con,gamma,x0,y0,tt,sigmax0,sigmay0,var): #multiplies all summed values together to get a probability 
-    #return forwd(x,y,gamma,var)*LV(xx,yy,con,gamma,var)
-    return forwd(x,y,gamma,var,x0new,y0new,t,sigmax0,sigmay0)*LV(xx,yy,con,gamma,var,x0,y0,tt,sigmax0,sigmay0)
+def integ(x,y,x0new,y0new,t,DLx,DLy,DLcon,gamma,tt,x0,y0,sigmax0,sigmay0,var): #multiplies all summed values together to get a probability 
+    return forwd(x,y,gamma,var,x0new,y0new,t,sigmax0,sigmay0)* LV(DLx,DLy,DLcon,gamma,var,x0,y0,tt,sigmax0,sigmay0)
     # return LV(xx,yy,con,gamma,var,x0,y0,tt,sigmax0,sigmay0,Ti)
     #return forwd(x,y,gamma,var,x0,y0,t,sigmax0,sigmay0)
+
+#The integ2 is used for when a prediction is wanted before any sample data has been collected.
+def integ2(x,y,x0new,y0new,t,gamma,sigmax0,sigmay0,var):
+    #return forwd(x,y,gamma,var)*LV(xx,yy,con,gamma,var)
+    return forwd(x,y,gamma,var,x0new,y0new,t,sigmax0,sigmay0)
 
 
 #This section is created for the Monte Carlo Integration. 
@@ -95,50 +100,65 @@ def integ(x,y,x0new,y0new,t,xx,yy,con,gamma,x0,y0,tt,sigmax0,sigmay0,var): #mult
 #The use of random variables eliminates the need for the deltas in the original Bayesian model.
 def sampler(varinterval): #assigns random values to the parameters to give the new parameters in ff, the ranges were given by Angelica
     while True:
-        mux = random.uniform(varinterval[0][0],varinterval[0][1])
-        muy = random.uniform(varinterval[1][0],varinterval[1][1])
-        sigmax = random.uniform(varinterval[2][0],varinterval[2][1])
-        sigmay = random.uniform(varinterval[3][0],varinterval[3][1])
-        rho = random.uniform(varinterval[4][0],varinterval[4][1])
-        yield (mux,muy,sigmax,sigmay,rho,mux,muy,sigmax,sigmay,rho,mux,muy,sigmax,sigmay,rho,mux,muy,sigmax,sigmay,rho)
+        mux1 = random.uniform(varinterval[0][0],varinterval[0][1])
+        mux2 = random.uniform(varinterval[0][0],varinterval[0][1])
+        mux3 = random.uniform(varinterval[0][0],varinterval[0][1])
+        mux4 = random.uniform(varinterval[0][0],varinterval[0][1])
+        muy1 = random.uniform(varinterval[1][0],varinterval[1][1])
+        muy2 = random.uniform(varinterval[1][0],varinterval[1][1])
+        muy3 = random.uniform(varinterval[1][0],varinterval[1][1])
+        muy4 = random.uniform(varinterval[1][0],varinterval[1][1])
+        sigmax1 = random.uniform(varinterval[2][0],varinterval[2][1])
+        sigmax2 = random.uniform(varinterval[2][0],varinterval[2][1])
+        sigmax3 = random.uniform(varinterval[2][0],varinterval[2][1])
+        sigmax4 = random.uniform(varinterval[2][0],varinterval[2][1])
+        sigmay1 = random.uniform(varinterval[3][0],varinterval[3][1])
+        sigmay2 = random.uniform(varinterval[3][0],varinterval[3][1])
+        sigmay3 = random.uniform(varinterval[3][0],varinterval[3][1])
+        sigmay4 = random.uniform(varinterval[3][0],varinterval[3][1])
+        rho1 = random.uniform(varinterval[4][0],varinterval[4][1])
+        rho2 = random.uniform(varinterval[4][0],varinterval[4][1])
+        rho3 = random.uniform(varinterval[4][0],varinterval[4][1])
+        rho4 = random.uniform(varinterval[4][0],varinterval[4][1])
+        yield (mux1,muy1,sigmax1,sigmay1,rho1,mux2,muy2,sigmax2,sigmay2,rho2,mux3,muy3,sigmax3,sigmay3,rho3,mux4,muy4,sigmax4,sigmay4,rho4)
 
 
 #This section produces the combination of gamma's for the 4 patches that will result in the maximum likelihood function.
 #It updates the lv list until there are no more possible combinations of gamma. 
 #gamma is defined as the mass fraction of total oil in the patches. The sum of gamma should be equal to 1. 
 #The possible combinations is ultimately 5^4
-def FindBestGamma(u,x,y,con,x0,y0,t,sigmax0,sigmay0,varinterval,Ti): #finding the best possible combination of gammas
+#The gammavalid is related to the x0new since the amount of patches has been determined. 
+def FindBestGamma(u,DLx,DLy,DLcon,x0,y0,t,sigmax0,sigmay0,varinterval): #finding the best possible combination of gammas
     g = np.linspace(0.,1.,u) #divides g equally to get [0,0.25,0.5,0.75,1.0]
     gammaPossible = np.array([seq for seq in itertools.product(g, repeat=u-1) if abs(sum(seq) - 1.0) < 1.0e-4]) #gives different combinations of possible gamma values like [0,0.25,0.25,0.50]
+    m=np.ones(patch)
+    print m
+    gammavalid = [i for i in gammaPossible if sum(i[0:patch] > 0.) == patch and sum(i > 0.) == patch]
+    print gammavalid
     i = 0
     lv = [] #values are entered into lv as an array and will stop once i > len(gammaPossible)
-    while i < len(gammaPossible):
+    while i < len(gammavalid):
         L = []
         j = 0
         while j < 1000:
             var = np.array(sampler(varinterval).next()) #gives the array of random mu, sigma, and ro values
-            tmp = LV(x,y,con,gammaPossible[i],var,x0,y0,t,sigmax0,sigmay0,Ti)
+            tmp = LV(DLx,DLy,DLcon,gammavalid[i],var,x0,y0,t,sigmax0,sigmay0)
             L.append(tmp) #updates the existing tmp list
             j = j+1 
         lv.append(max(L)) #updates L and is returned to the first []
         i = i+1 #gives new value to initial i and continues until loop stops
     # return np.argmax(np.array(lv))#
-    return gammaPossible[np.argmax(np.array(lv))] #returns the gammaPossible that gives the maximum probability 
+    return gammavalid[np.argmax(np.array(lv))]
 
-# def retardationDueOilType(oilType):
-#     if oilType == 1.0:
-#         retardation = 7.0
-#     if oilType == 2.0:
-#         retardation = 5.6
-#     if oilType == 3.0:
-#         retardation = 4.2
-#     if oilType == 4.0:
-#         retardation = 2.8
-#     if oilType == 5.0:
-#         retardation = 1.4
-#     if oilType == 6.0:
-#         retardation = 0.0
-#     return retardation
+class Preliminars: # SOSim
+    def __init__(self): 
+        self.w = 4
+        self.u = self.w + 1
+        self.delta = 0
+        self.args = []
+        self.discarded = 0.0
+        self.valid = 0.0
+        self.GammaPossible = []
 
 
 #This section is used to import data that is given from the User in the GUI. 
@@ -184,6 +204,7 @@ class soscore(Preliminars): #SOSimCore, this imports the data from the user in t
         self.OilType = OilType
         self.sx0 = sigmax0
         self.sy0 = sigmay0
+
 
         self.xclicks = 0 #zero because there is no reflection
         self.yclicks = 0
@@ -247,10 +268,10 @@ class soscore(Preliminars): #SOSimCore, this imports the data from the user in t
         if self.OilType == 6.0:
             retardation = 0.0
         self.retardation = retardation
-        B = [max(self.DLcon[vld]) for vld in xrange(len(self.st))] #different campaign data, it picks the maximum concentration for each campaign
-        hiIndex = B.index(max(B)) #location for the maximum concentration 
+        B = max(max(self.DLcon)) #different campaign data, it picks the maximum concentration for each campaign
+        self.hiIndex = [i for i, j in enumerate(max(self.DLcon)) if j == B] #location for the maximum concentration 
         latestST = max(self.st) #finds latest sampling time
-        self.admST = self.st[hiIndex] + self.retardation #sampling time at maximum concentration plus retardation
+        self.admST = latestST + self.retardation #sampling time at maximum concentration plus retardation
         self.t = np.array(self.t) - self.admST #prediction time to the maximum concentration campaign
 
 
@@ -258,42 +279,104 @@ class soscore(Preliminars): #SOSimCore, this imports the data from the user in t
     #needs to be called after data has been uploaded and processed.
     #This was taken directly from Angelica's code. 
     def x0y0DueSinkingRetardation(self): #given in Angelica's SOSimOPI module, defines the oil characteristic at the spill location
-        B = [max(self.DLcon[vld]) for vld in xrange(len(self.st))]#[max(self.DLcon[vld]) for vld in xrange(len(self.st))]
-        C = [self.DLcon[vld].argmax() for vld in xrange(len(self.st))]
-        x0new = [(self.DLx[vld][C[vld]]) for vld in xrange(len(self.st))]
-        y0new = [(self.DLy[vld][C[vld]]) for vld in xrange(len(self.st))]
-        tnews = [self.st[vld]*B[vld] for vld in xrange(len(self.st))]
+        B = [max(self.DLcon[vld]) for vld in xrange(len(self.st))]
+        hiIndex = B.index(max(B))
+        self.DLcon[hiIndex]        
+        C = [i for i, j in enumerate(self.DLcon[hiIndex].tolist()) if j == max(B)]
+        x0news = self.DLx[hiIndex][C]
+        y0news = self.DLy[hiIndex][C]
+        DL = np.array([[i,j] for i, j in zip(x0news,y0news)])
+        if len(DL) < 4.:
+            n_clusters = len(DL)
+        else:
+            n_clusters = 4
+        estimator = KMeans(n_clusters)#构造聚类器
+        estimator.fit(DL)#聚类
+        label_pred = estimator.labels_ #获取聚类标签
+        centroids = estimator.cluster_centers_ #获取聚类中心
+        inertia = estimator.inertia_ # 获取聚类准则的总和
+        
+        x0new = centroids[:,0]
+        y0new = centroids[:,1]
+        self.x0new = np.pad(x0new,(0,4-len(DL)),'constant')
+        self.y0new = np.pad(y0new,(0,4-len(DL)),'constant')
+        self.patch = n_clusters
+
+        plt.plot(x0news,y0news,'.')
+        plt.plot(centroids[:,0],centroids[:,1],'*')
+
         x0 = self.x0
         y0 = self.y0
         oilType = self.OilType
-        distX = np.array([x0new[vld] - self.x0 for vld in xrange(len(self.st))])
-        distY = np.array([y0new[vld] - self.y0 for vld in xrange(len(self.st))])
+        #distX = np.array([x0new[vld] - self.x0 for vld in xrange(len(self.st))])
+        #distY = np.array([y0new[vld] - self.y0 for vld in xrange(len(self.st))])
+        distX = np.array(x0new - x0)
+        distY = np.array(y0new - y0)
         if oilType == 1.0:
-            sunkx0 = (x0 + (7.0*(distX/8.0)))*B
-            sunky0 = (y0 + (7.0*(distY/8.0)))*B
+            sunkx0 = (x0 + (7.0*(np.array(distX)/8.0)))*B
+            sunky0 = (y0 + (7.0*(np.array(distY)/8.0)))*B
         if oilType == 2.0:
-            sunkx0 = (x0 + (5.6*(distX/8.0)))*B
-            sunky0 = (y0 + (5.6*(distY/8.0)))*B
+            sunkx0 = (x0 + (5.6*(np.array(distX)/8.0)))*B
+            sunky0 = (y0 + (5.6*(np.array(distY)/8.0)))*B
         if oilType == 3.0:
-            sunkx0 = (x0 + (4.2*(distX/8.0)))*B
-            sunky0 = (y0 + (4.2*(distY/8.0)))*B
+            sunkx0 = (x0 + (4.2*(np.array(distX)/8.0)))*B
+            sunky0 = (y0 + (4.2*(np.array(distY)/8.0)))*B
         if oilType == 4.0:
-            sunkx0 = (x0 + (2.8*(distX/8.0)))*B
-            sunky0 = (y0 + (2.8*(distY/8.0)))*B
+            sunkx0 = (x0 + (2.8*(np.array(distX)/8.0)))*B
+            sunky0 = (y0 + (2.8*(np.array(distY)/8.0)))*B
         if oilType == 5.0:
-            sunkx0 = (x0 + (1.4*(distX/8.0)))*B
-            sunky0 = (y0 + (1.4*(distY/8.0)))*B
+            sunkx0 = (x0 + (1.4*(np.array(distX)/8.0)))*B
+            sunky0 = (y0 + (1.4*(np.array(distY)/8.0)))*B
         if oilType == 6.0:
-            sunkx0 = (x0 + (0.0*(distX/8.0)))*B
-            sunky0 = (y0 + (0.0*(distY/8.0)))*B
-        self.sunkx0 = sum(sunkx0)/sum(B) #average
-        self.sunky0 = sum(sunky0)/sum(B)
+            sunkx0 = (x0 + (0.0*(np.array(distX)/8.0)))*B
+            sunky0 = (y0 + (0.0*(np.array(distY)/8.0)))*B
+        self.sunkx0 = sum(sunkx0)/len(x0new) #average
+        self.sunky0 = sum(sunky0)/len(y0new)
+
+    #This section is called when there has been no sample data and the likelihood function cannot be determined. 
+    def NO_campaign(self):
+        if self.OilType == 1.0:
+            retardation = 7.0
+        if self.OilType == 2.0:
+            retardation = 5.6
+        if self.OilType == 3.0:
+            retardation = 4.2
+        if self.OilType == 4.0:
+            retardation = 2.8
+        if self.OilType == 5.0:
+            retardation = 1.4
+        if self.OilType == 6.0:
+            retardation = 0.0
+        self.retardation = retardation
+        self.st = 0
+        self.admST = self.st + self.retardation
+        self.t = np.array(self.t) - self.admST # time to the maximum concentration campaign
+        self.x0new = np.ones(4)*self.x0
+        self.y0new = np.ones(4)*self.y0
+
 def CalTime(a,b): #converts dates from excel into the code 
     start = datetime.datetime.strptime(a, '%Y-%m-%d %H:%M:%S')
     ends = datetime.datetime.strptime(b, '%Y-%m-%d %H:%M:%S')
 
     diff = ends - start
     return diff.total_seconds()/86400.
+
+#This section allows for the use of multiprocessing.
+#When used, it decreases the run time from about 5 hours for an integration calculation of 100,000 times to 1 hour. 
+def job(a,parameter):
+    x,y = parameter
+    result1, error = mcint.integrate(lambda v: integ(x,y,a.x0new,a.y0new,a.t[0],a.DLx,a.DLy,a.DLcon,a.gamma,a.sunkx0,a.sunky0,a.st,a.sx0,a.sy0,v), sampler(a.varinterval), measure=1,n=1000)
+    return result1
+
+def multicore(a,parameter):
+        pool = mp.Pool(4)
+        #res = pool.map(job())
+        # res = pool.apply_async(job())
+        # multi_res = [pool.apply_async(job(),(parameter[i]))for i in range(10)]
+        # mean([res.get() for res in multi_res])
+        # pa = [[0,1],[1,2]]
+        res = pool.map(partial(job,a),parameter)
+        return res
 
 
  #These are the default parameters for the code given in Angelica's paper.
@@ -302,42 +385,41 @@ def CalTime(a,b): #converts dates from excel into the code
 if __name__ == "__main__": #assumed ranges of values from Angelica's code
     Dxmin = 0.01
     Dymin = 0.01
-    Dxmax = 0.89    
-    Dymax = 0.89 
+    Dxmax = 0.89   
+    Dymax = 0.89
     vxmin = -3.0
     vymin = -3.0
     vxmax = 3.0
     vymax = 3.0
-    romin = -0.99
-    romax = 0.99
+    romin = -0.999
+    romax = 0.999
 
     varinterval = [[vxmin,vxmax],[vymin,vymax],[Dxmin,Dxmax],[Dymin,Dymax],[romin,romax]] #puts the values into an array for the random assignment in Sampler()
     #Ti = np.linspace(SpillT[0],SpillT[1],Tn)
-    #bestgamma=FindBestGamma(5,DLx,DLy,DLc,x0,y0,ST,sigmax0,sigmay0,varinterval,Ti)
-    #gamma = bestgamma
-
-    #print bestgamma
-
-    gamma = [0.0,0.0,0.0,1.0]  
+  
+  
     
 
     #This section uploads the sample input data and the given campaign data.
     #This section also creates the plot to provide the given output. 
     #This section is temporary until the code can be integrated with the GUI.
     a = soscore("datainput.csv")
-    a.UploadCampaign(["data2.csv"])
+    a.UploadCampaign(["DBL input1.csv"])
     a.retardationDueOilType()
     a.x0y0DueSinkingRetardation()
+    #a.NO_campaign()
+
+    print a.st
     # Calculate GammaPossible
-    aargs = a.doAll(Dxmin, Dymin, Dxmax, Dymax, vxmin, vymin, vxmax, vymax, romin, romax)
-    newsze = aargs[1]
-    valid = aargs[2]
-    vx = aargs[3]
-    vy = aargs[4]
-    Dx = aargs[5]
-    Dy = aargs[6]
-    ro = aargs[7]
-    g =  aargs[8]
+    #aargs = a.doAll(Dxmin, Dymin, Dxmax, Dymax, vxmin, vymin, vxmax, vymax, romin, romax)
+    #newsze = aargs[1]
+    #valid = aargs[2]
+    #vx = aargs[3]
+    #vy = aargs[4]
+    #Dx = aargs[5]
+    #Dy = aargs[6]
+    #ro = aargs[7]
+    #g =  aargs[8]
     if len(a.st) == 1:
         maxN = len(a.DLcon[0])
     if len(a.st) > 1:
@@ -347,19 +429,24 @@ if __name__ == "__main__": #assumed ranges of values from Angelica's code
             maxN = max(maxN, max(len(a.DLcon[k]), len(a.DLcon[k+1])))
             k += 1
     print "maxN: %s" % maxN
-    argus = aargs
-    argus.append(a.xclicks)
-    argus.append(a.yclicks)
-    a.user_nodes_x = 0
-    a.user_nodes_y = 0
+    #argus = aargs
+    #argus.append(a.xclicks)
+    #argus.append(a.yclicks)
+    #a.user_nodes_x = 0
+    #a.user_nodes_y = 0
 
+    gamma=FindBestGamma(a.u,a.DLx,a.DLy,a.DLcon,a.sunkx0,a.sunky0,a.st,a.sx0,a.sy0,varinterval,a.patch) 
+    a.gamma = gamma
+    print gamma
+
+    a.varinterval = varinterval
 
     #provides the grid for the output image
     x_min = a.lat0 - a.scale[0]
     x_max = a.lat0 + a.scale[0]
     y_min = a.lon0 - a.scale[1]
     y_max = a.lon0 + a.scale[1]
-    a.newsze = newsze
+    #a.newsze = newsze
     print a.x0,a.y0
     print "Model Size" + str(x_min) +str(x_max)+str(y_min)+str(y_max)
     print a.t, a.admST
@@ -370,16 +457,20 @@ if __name__ == "__main__": #assumed ranges of values from Angelica's code
     a.y_min = leftc[1]/1000
     a.y_max = rightc[1]/1000
 
-    B = [max(a.DLcon[vld]) for vld in xrange(len(a.st))]
-    C = [a.DLcon[vld].argmax() for vld in xrange(len(a.st))]
-    x0news = [(a.DLx[vld][C[vld]])*B[vld] for vld in xrange(len(a.st))]
-    y0news = [(a.DLy[vld][C[vld]])*B[vld] for vld in xrange(len(a.st))]
-    x0new = sum(x0news)/sum(B)
-    y0new = sum(y0news)/sum(B)
-    a.x0new = x0new
-    a.y0new = y0new
-    print "x0new:", x0new
-    print "y0new:", y0new
+    #B = max(max(a.DLcon)) #[max(self.DLcon[vld]) for vld in xrange(len(self.st))]
+    #C = [i for i, j in enumerate(max(a.DLcon)) if j == B]
+    #DLx=max(a.DLx)
+    #DLy=max(a.DLy)
+    #x0new = np.array(DLx[C])
+    #y0new = np.array(DLy[C])
+    #x0news = [(a.DLx[vld][C[vld]])*B[vld] for vld in xrange(len(a.st))]
+    #y0news = [(a.DLy[vld][C[vld]])*B[vld] for vld in xrange(len(a.st))]
+    #x0new = sum(x0news)/sum(B)
+    #y0new = sum(y0news)/sum(B)
+    #a.x0new = x0new
+    #a.y0new = y0new
+    #print "x0new:", x0new
+    #print "y0new:", y0new
     
     #divides the scale into equal sections for the output image
     X = np.linspace(a.lat0-a.scale[0],a.lat0+a.scale[0],a.Node+1)
@@ -393,142 +484,43 @@ if __name__ == "__main__": #assumed ranges of values from Angelica's code
     y = np.concatenate(y)
     print a.t
     print a.admST
-    print a.DLx[0]
+    print a.DLx
+    print a.DLy
+    print a.DLcon
+    print a.x0new
+    print a.sunkx0
+    
     res=[]
     resfinal = []
     print len(x),len(y)
-    for r in range(len(a.t)):
+
+    for r in range(len(a.t)): 
         resa=[]
-        for i,j in zip(x,y):
+        parameter = zip(x,y)
+        resa = [multcore(a,parameter) for m in range(5)]
+        b = len(resa)
+        sum = 0
+        for i in resa:
+            sum = sum + np.array(i)
+
+        res.append(sum)
+
+        #for i,j in zip(x,y):
                 # def integ(x,y,x0new,y0new,a.t,xx,yy,con,gamma,x0,y0,tt,sigmax0,sigmay0,var):
-                result, error = mcint.integrate(lambda v: integ(i,j,a.x0new,a.y0new,a.t[r],a.DLx[0],a.DLy[0],a.DLcon[0],gamma,a.x0,a.y0,a.admST,a.sx0,a.sy0,v), sampler(varinterval), measure=1)
-                resa.append(result)
-        res.append(resa)
+                #result, error = mcint.integrate(lambda v: integ(i,j,a.x0new[0],a.y0new[0],a.t[r],a.DLx[0],a.DLy[0],a.DLcon[0],gamma,a.sunkx0,a.sunky0,a.admST,a.sx0,a.sy0,v), sampler(varinterval), measure=1)
+                #result2, error = mcint.integrate(lambda v: integ(i,j,a.x0new[1],a.y0new[1],a.t[r],a.DLx[0],a.DLy[0],a.DLcon[0],gamma,a.sunkx0,a.sunky0,a.admST,a.sx0,a.sy0,v), sampler(varinterval), measure=1)
+                #result = result1 + result2
+                #resa.append(result)
+        #res.append(resa)
+
     s=np.array(res)
+    print np.max(s)
     for i in range(len(a.t)):
         plt.figure(i)
         l = int(np.sqrt(len(x)))
         plt.contourf(Y,X,s.reshape(l,l),500)
         plt.show()
-        # names=r'g%s' %ga
-        # G = open(names,"w")
-        # np.savetxt(names,resfinal)
-        # G.close()
-
-    # print res
-    # # print result
+  
 
 
-
-
-
-
-    # # Tn=1
-    # # Ti = np.linspace(SpillT[0],SpillT[1],1)
-    # Ti= [0.]
-    # # Ti = np.linspace(SpillT[0],SpillT[1],Tn)
-    # #nmc = 10
-    # domainsize = 1.0
-    # resfinal = []
-    # res = [] 
-    # for t in PT: #prediction time#
-    #     res = []
-    #     resa = []
-    #     for i in xc:
-    #         for j in yc:
-    #             result, error = mcint.integrate(lambda v: integ(i,j,DLx,DLy,DLc,gamma,x0,y0,t, ST,sigmax0,sigmay0,v,Ti),sampler(varinterval), measure=domainsize)
-    #             resa.append(result)
-    #     res.append(resa)
-    # resfinal.append(np.sum(res,0))
-
-    # for i in range(len(PT)):
-    #     plt.figure(i)
-    #     s=resfinal 
-    #     s=np.array(s)
-    #     # s= s/np.max(s)
-    #     # print s
-    #     plt.pcolor(mm[:,1],mm[:,0],(s.reshape(len(xc),len(xc))))
-    #     plt.colorbar()
-    # names=r'g%s' %ga
-    # G = open(names,"w")
-    # np.savetxt(names,resfinal)
-    # G.close()
-    # #G.write(str(resfinal))
-    # # plt.show() 
-
-
-   
-
-# print res
-# Find the best gamma
-# print x0,DLx[85:86]
-# print DLc[85:86]
-# v = sampler(varinterval)
-#vv=v.next()
-# print vv
-# # print ff(2.0,2.0,0.0,0.0,0.5,0.5,0.5,0,0,0,0.1,0.1)
-# print x0\
-# print ff(x0+0.01,y0+0.01,vv[0],vv[1],vv[2],vv[3],vv[4],x0,y0,0.0,sigmax0,sigmay0)
-# print LV(DLx[40:80],DLy[40:80],DLc[40:80],[0.25,0.25,0.25,0.25],v.next(),x0,y0,7.0,sigmax0,sigmay0)
-#bestgamma=FindBestGamma(5,DLx[85:90],DLy[85:90],DLc[85:90],x0,y0,ST,sigmax0,sigmay0,varinterval)
-#print bestgamma
-# print bestgamma
-# gamma = [1.0,0.0,0.0,0.0]
-# nmc = 1000
-# domainsize = 1.0
-# for t in PT:
-#     for i in x[1:2]:
-#         for j in y[1:2]:
-#             result, error = mcint.integrate(lambda v: integ(i,j,DLx,DLy,DLc,gamma,x0,y0,t,ST,sigmax0,sigmay0,v), sampler(), measure=domainsize, n=nmc)
-# print result
-
-
-## THE MAIN PART
-## First one need the simulation area， defined as lat，lon min&max
-## INPUT DECLARATION
-# First we assume all the values are in SI unit
-# spillcood = [10,10]
-# spillT = 0
-# predictT = 10
-# modelArea = [[0,0],[20,20]]
-# gridN = [25,25]
-# campdata= pd.read_csv("data.csv")
-# xx = np.array(campdata["lat"])
-# yy = np.array(campdata["lon"])
-# cc = np.array(campdata["con"])
-# tt = np.array(campdata["time"])
-# print xx
-# print yy
-# print cc
-
-# gridx = 10
-# gridy = 10
-# xc = np.linspace(modelArea[0][0],modelArea[1][0],gridx+1)
-# yc = np.linspace(modelArea[0][1],modelArea[1][1],gridy+1)
-# xper = np.array(list(itertools.product(xc,yc)))
-# x = xper[:,0]
-# y = xper[:,1]
-# domainsize = 1.0
-# t = 0
-# nmc = 1000
-# #while t < predictT:
-# result, error = mcint.integrate(lambda v: integ(x[0],y[0],xx,yy,cc,gamma,v), sampler(), measure=domainsize, n=nmc)
-
-
-
-
-
-# x=2.0
-# y=2.0
-# xx=[2.0,2.0]
-# yy=[2.0,2.0]
-# con=[1.0,0.5]
-# gamma = [0.25,0.25,0.25,0.25]
-# domainsize = 1.0
-# for nmc in [1000,10000]:
-#    random.seed(1)
-#    result, error = mcint.integrate(lambda v: integ(x,y,xx,yy,con,gamma,v), sampler(), measure=domainsize, n=nmc)
-# print result
-# bestgamma=FindBestGamma(5,xx,yy,con)
-# print bestgamma
 
