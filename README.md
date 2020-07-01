@@ -1,5 +1,4 @@
 # SOSim-New-Code
-# Recommendations-with-IBM Project
 
 ![Intro Pic]
 
